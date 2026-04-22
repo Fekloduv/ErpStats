@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: erp-progress
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
