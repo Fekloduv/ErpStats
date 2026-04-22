@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ERP Progress Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <main class="container">
+        <header class="hero">
+            <div>
+                <h1>Мониторинг внедрения ПО «ИСКРА»</h1>
+                <p>
+                    План из 9 спринтов (30 календарных / 20 рабочих дней каждый):
+                    фиксируйте веса работ Исполнителя и Заказчика, вносите факт, контролируйте долги,
+                    зависимости и общий показатель внедрения в 100 баллов.
+                </p>
+            </div>
+            <div class="hero-actions">
+                <button id="editTargetsBtn" class="btn btn-primary">Настроить план</button>
+                <button id="reportBtn" class="btn btn-secondary">Сформировать отчёт</button>
+            </div>
+        </header>
+
+        <section class="panel">
+            <h2>Спринты: план, факт, баллы, зависимости</h2>
+            <p class="muted" id="weightsSummary"></p>
+            <div class="table-wrap">
+                <table id="metricsTable">
+                    <thead></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="panel" id="reportPanel" hidden>
+            <div class="report-head">
+                <h2>Отчёт выполнения</h2>
+                <label>
+                    Период (спринтов):
+                    <select id="periodSelect"></select>
+                </label>
+                <button id="refreshReportBtn" class="btn btn-secondary">Обновить</button>
+            </div>
+            <div class="progress-card">
+                <div class="progress-top">
+                    <strong id="progressValue">0%</strong>
+                    <span id="progressDetail"></span>
+                </div>
+                <div class="progress-bar">
+                    <div id="progressBarFill"></div>
+                </div>
+            </div>
+            <div>
+                <h3>Работы с нарушением сроков / отставанием</h3>
+                <ul id="laggingList" class="lagging-list"></ul>
+            </div>
+            <div>
+                <h3>Накопленные долги</h3>
+                <ul id="debtsList" class="lagging-list"></ul>
+            </div>
+            <div>
+                <h3>Прогноз сроков</h3>
+                <p id="forecastText"></p>
+            </div>
+            <div>
+                <h3>Рекомендации по ускорению</h3>
+                <ul id="recommendationsList" class="lagging-list"></ul>
+            </div>
+            <div>
+                <h3>Детализация по спринтам</h3>
+                <div class="table-wrap">
+                    <table id="reportDetailsTable">
+                        <thead></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <dialog id="targetsDialog">
+        <form id="targetsForm" method="dialog">
+            <h3>Настройка плана</h3>
+            <p class="muted">
+                Для каждого спринта задайте веса баллов (Исполнитель/Заказчик) и целевое значение метрики Заказчика.
+            </p>
+            <div id="targetsGrid" class="targets-grid"></div>
+            <div class="dialog-actions">
+                <button type="button" class="btn btn-ghost" id="cancelTargetsBtn">Отмена</button>
+                <button type="submit" class="btn btn-primary">Сохранить</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="actualsDialog">
+        <form id="actualsForm" method="dialog">
+            <h3 id="actualsTitle">Внести данные</h3>
+            <div id="actualsFields" class="stack"></div>
+            <div class="dialog-actions">
+                <button type="button" class="btn btn-ghost" id="cancelActualsBtn">Отмена</button>
+                <button type="submit" class="btn btn-primary">Сохранить</button>
+            </div>
+        </form>
+    </dialog>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
