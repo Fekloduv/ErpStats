@@ -15,7 +15,11 @@ const reportBtn = document.getElementById("reportBtn");
 const reportPanel = document.getElementById("reportPanel");
 const periodSelect = document.getElementById("periodSelect");
 const refreshReportBtn = document.getElementById("refreshReportBtn");
-const laggingList = document.getElementById("laggingList");
+const laggingSummary = document.getElementById("laggingSummary");
+const laggingCriticalList = document.getElementById("laggingCriticalList");
+const laggingExecutorList = document.getElementById("laggingExecutorList");
+const laggingCustomerList = document.getElementById("laggingCustomerList");
+const laggingDependenciesList = document.getElementById("laggingDependenciesList");
 const debtsList = document.getElementById("debtsList");
 const forecastText = document.getElementById("forecastText");
 const recommendationsList = document.getElementById("recommendationsList");
@@ -53,6 +57,48 @@ async function api(url, options = {}) {
 
 function numberFormat(value) {
   return Number(value || 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 });
+}
+
+function renderLaggingItems(items) {
+  laggingCriticalList.innerHTML = "";
+  laggingExecutorList.innerHTML = "";
+  laggingCustomerList.innerHTML = "";
+  laggingDependenciesList.innerHTML = "";
+
+  if (items.length === 0) {
+    laggingSummary.textContent = "Нарушений сроков и критических отставаний нет.";
+    laggingCriticalList.innerHTML = "<li>Нет критичных отклонений.</li>";
+    laggingExecutorList.innerHTML = "<li>Отставаний не выявлено.</li>";
+    laggingCustomerList.innerHTML = "<li>Отставаний не выявлено.</li>";
+    laggingDependenciesList.innerHTML = "<li>Блокирующих зависимостей нет.</li>";
+    return;
+  }
+
+  const critical = items
+    .filter((item) => Number(item.severity || 0) >= 60)
+    .sort((a, b) => Number(b.severity || 0) - Number(a.severity || 0));
+  const executor = items.filter((item) => item.area === "Исполнитель");
+  const customer = items.filter((item) => item.area === "Заказчик");
+  const dependencies = items.filter((item) => item.area === "Зависимости");
+
+  laggingSummary.textContent = `Всего отклонений: ${items.length}. Критичных: ${critical.length}.`;
+
+  const fillList = (target, list, emptyText) => {
+    if (list.length === 0) {
+      target.innerHTML = `<li>${emptyText}</li>`;
+      return;
+    }
+    list.forEach((item) => {
+      const li = document.createElement("li");
+      li.textContent = `Спринт ${item.sprint}: ${item.problem}`;
+      target.appendChild(li);
+    });
+  };
+
+  fillList(laggingCriticalList, critical, "Нет критичных отклонений.");
+  fillList(laggingExecutorList, executor, "Нарушений у Исполнителя нет.");
+  fillList(laggingCustomerList, customer, "Нарушений у Заказчика нет.");
+  fillList(laggingDependenciesList, dependencies, "Блокирующих зависимостей нет.");
 }
 
 function renderTable() {
@@ -265,16 +311,7 @@ async function loadReport() {
     progressDetail.textContent = `Показатель внедрения: ${numberFormat(data.scoreActual)} из ${numberFormat(data.scoreMax)} баллов`;
     progressBarFill.style.width = `${Math.min(data.progressPercent, 100)}%`;
 
-    laggingList.innerHTML = "";
-    if (data.delayedItems.length === 0) {
-      laggingList.innerHTML = "<li>Нарушений сроков и критических отставаний нет.</li>";
-    } else {
-      data.delayedItems.forEach((item) => {
-        const li = document.createElement("li");
-        li.textContent = `Спринт ${item.sprint} [${item.area}]: ${item.problem}`;
-        laggingList.appendChild(li);
-      });
-    }
+    renderLaggingItems(data.delayedItems);
 
     debtsList.innerHTML = "";
     if (data.debts.length === 0) {

@@ -54,7 +54,25 @@
             </div>
             <div>
                 <h3>Работы с нарушением сроков / отставанием</h3>
-                <ul id="laggingList" class="lagging-list"></ul>
+                <p class="muted" id="laggingSummary"></p>
+                <div class="lagging-grid">
+                    <div class="lagging-card">
+                        <h4>Критично (приоритет 1)</h4>
+                        <ul id="laggingCriticalList" class="lagging-list"></ul>
+                    </div>
+                    <div class="lagging-card">
+                        <h4>Исполнитель</h4>
+                        <ul id="laggingExecutorList" class="lagging-list"></ul>
+                    </div>
+                    <div class="lagging-card">
+                        <h4>Заказчик</h4>
+                        <ul id="laggingCustomerList" class="lagging-list"></ul>
+                    </div>
+                    <div class="lagging-card">
+                        <h4>Зависимости</h4>
+                        <ul id="laggingDependenciesList" class="lagging-list"></ul>
+                    </div>
+                </div>
             </div>
             <div>
                 <h3>Накопленные долги</h3>

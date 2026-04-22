@@ -160,6 +160,23 @@ td small {
     color: #3b4552;
 }
 
+.lagging-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+}
+
+.lagging-card {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 10px;
+    background: #fbfcff;
+}
+
+.lagging-card h4 {
+    margin: 0 0 8px;
+}
+
 .muted {
     color: var(--muted);
     margin-top: -2px;
