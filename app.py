@@ -511,25 +511,20 @@ def _load_reportlab():
 
 
 def _setup_pdf_font(pdfmetrics, ttfonts):
-    font_name = "Helvetica"
-    bundled_candidates = []
-    try:
-        reportlab_module = importlib.import_module("reportlab")
-        reportlab_dir = os.path.dirname(reportlab_module.__file__)
-        bundled_candidates = [
-            os.path.join(reportlab_dir, "fonts", "Vera.ttf"),
-            os.path.join(reportlab_dir, "fonts", "VeraBd.ttf"),
-        ]
-    except Exception:
-        bundled_candidates = []
-
+    # Helvetica/Vera in ReportLab have no Cyrillic → squares in PDF. Prefer a
+    # project-bundled OFL font (Noto), then system fonts. Never use Vera for RU.
+    base_dir = os.path.dirname(os.path.abspath(__file__))
     candidates = [
+        os.path.join(base_dir, "fonts", "NotoSans-Regular.ttf"),
         r"C:\Windows\Fonts\arial.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-    ] + bundled_candidates
+    ]
+    font_name = "Helvetica"
     for path in candidates:
+        if not path or not os.path.isfile(path):
+            continue
         try:
             pdfmetrics.registerFont(ttfonts.TTFont("AppUnicode", path))
             font_name = "AppUnicode"
