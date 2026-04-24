@@ -18,6 +18,7 @@ const planBtn = document.getElementById("planBtn");
 const reportPanel = document.getElementById("reportPanel");
 const periodSelect = document.getElementById("periodSelect");
 const refreshReportBtn = document.getElementById("refreshReportBtn");
+const downloadPdfBtn = document.getElementById("downloadPdfBtn");
 const laggingSummary = document.getElementById("laggingSummary");
 const laggingCriticalList = document.getElementById("laggingCriticalList");
 const laggingExecutorList = document.getElementById("laggingExecutorList");
@@ -54,6 +55,7 @@ const planForm = document.getElementById("planForm");
 const planTableBody = document.getElementById("planTableBody");
 const planTimelineWrap = document.getElementById("planTimelineWrap");
 const closePlanBtn = document.getElementById("closePlanBtn");
+const downloadPlanPdfBtn = document.getElementById("downloadPlanPdfBtn");
 
 let activeSprint = null;
 
@@ -76,6 +78,10 @@ function numberFormat(value) {
 function getMetricName(metricId) {
   const metric = state.metricsCatalog.find((item) => item.id === Number(metricId));
   return metric?.name || `Метрика ${metricId}`;
+}
+
+function normalizeTimelineTaskName(name) {
+  return String(name || "").replace(/^Исполнитель:?\s+/i, "");
 }
 
 function getTaskProgress(sprintKey, task) {
@@ -581,7 +587,8 @@ function renderTimeline(targetElement, customerItems, executorItems, options = {
 
         const label = document.createElement("div");
         label.className = "timeline-task-label";
-        label.textContent = showProgress ? `${item.metricName} (${numberFormat(item.progress)}%)` : `${item.metricName}`;
+        const cleanName = normalizeTimelineTaskName(item.metricName);
+        label.textContent = showProgress ? `${cleanName} (${numberFormat(item.progress)}%)` : cleanName;
 
         task.appendChild(progressFill);
         task.appendChild(label);
@@ -686,6 +693,61 @@ async function loadReport() {
   }
 }
 
+async function downloadPdfReport() {
+  const period = Number(periodSelect.value || state.sprintCount);
+  try {
+    const response = await fetch(`/api/report/pdf?period=${encodeURIComponent(period)}`);
+    if (!response.ok) {
+      let message = "Ошибка выгрузки PDF";
+      try {
+        const errorData = await response.json();
+        message = errorData.error || message;
+      } catch (_e) {
+        // no-op
+      }
+      throw new Error(message);
+    }
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `report_sprint_${period}.pdf`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(url);
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function downloadPlanPdf() {
+  try {
+    const response = await fetch("/api/plan/pdf");
+    if (!response.ok) {
+      let message = "Ошибка выгрузки PDF плана";
+      try {
+        const errorData = await response.json();
+        message = errorData.error || message;
+      } catch (_e) {
+        // no-op
+      }
+      throw new Error(message);
+    }
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "plan.pdf";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(url);
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
 async function loadState() {
   const data = await api("/api/state");
   state.sprintCount = data.sprintCount;
@@ -705,10 +767,12 @@ editMetricTargetsBtn.addEventListener("click", openMetricTargetsDialog);
 reportBtn.addEventListener("click", loadReport);
 planBtn.addEventListener("click", openPlanDialog);
 refreshReportBtn.addEventListener("click", loadReport);
+downloadPdfBtn.addEventListener("click", downloadPdfReport);
 cancelTargetsBtn.addEventListener("click", () => targetsDialog.close());
 cancelMetricTargetsBtn.addEventListener("click", () => metricTargetsDialog.close());
 cancelActualsBtn.addEventListener("click", () => actualsDialog.close());
 closePlanBtn.addEventListener("click", () => planDialog.close());
+downloadPlanPdfBtn.addEventListener("click", downloadPlanPdf);
 targetsForm.addEventListener("submit", saveTargets);
 metricTargetsForm.addEventListener("submit", saveMetricTargets);
 actualsForm.addEventListener("submit", saveActuals);

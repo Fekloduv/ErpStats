@@ -1,4 +1,8 @@
-from flask import Flask, jsonify, render_template, request
+import io
+import importlib
+from datetime import datetime
+
+from flask import Flask, jsonify, render_template, request, send_file
 
 app = Flask(__name__)
 
@@ -279,11 +283,20 @@ def save_actuals(sprint_id):
 @app.post("/api/report")
 def report():
     payload = request.get_json(silent=True) or {}
+    period = _parse_period(payload.get("period", SPRINT_COUNT))
+
+    return jsonify(_build_report_payload(period))
+
+
+def _parse_period(value):
     try:
-        period = int(payload.get("period", SPRINT_COUNT))
+        period = int(value)
     except (TypeError, ValueError):
         period = SPRINT_COUNT
-    period = max(1, min(period, SPRINT_COUNT))
+    return max(1, min(period, SPRINT_COUNT))
+
+
+def _build_report_payload(period):
 
     considered_sprints = [str(i) for i in range(1, period + 1)]
     max_score_period = 0.0
@@ -471,22 +484,395 @@ def report():
 
     progress = 0.0 if full_max_score == 0 else min((actual_score / full_max_score) * 100, 100)
 
-    return jsonify(
-        {
-            "period": period,
-            "progressPercent": round(progress, 2),
-            "scoreActual": round(actual_score, 2),
-            "scoreMax": round(full_max_score, 2),
-            "scorePeriodMax": round(max_score_period, 2),
-            "delayedItems": delayed_items,
-            "debts": debts,
-            "forecast": forecast_text,
-            "recommendations": recommendations,
-            "sprintDetails": sprint_details,
-            "timeline": timeline_items,
-            "customerTimeline": timeline_items,
-            "executorTimeline": executor_timeline_items,
-        }
+    return {
+        "period": period,
+        "progressPercent": round(progress, 2),
+        "scoreActual": round(actual_score, 2),
+        "scoreMax": round(full_max_score, 2),
+        "scorePeriodMax": round(max_score_period, 2),
+        "delayedItems": delayed_items,
+        "debts": debts,
+        "forecast": forecast_text,
+        "recommendations": recommendations,
+        "sprintDetails": sprint_details,
+        "timeline": timeline_items,
+        "customerTimeline": timeline_items,
+        "executorTimeline": executor_timeline_items,
+    }
+
+
+def _load_reportlab():
+    pagesizes = importlib.import_module("reportlab.lib.pagesizes")
+    pdfmetrics = importlib.import_module("reportlab.pdfbase.pdfmetrics")
+    ttfonts = importlib.import_module("reportlab.pdfbase.ttfonts")
+    canvas_module = importlib.import_module("reportlab.pdfgen.canvas")
+    return pagesizes, pdfmetrics, ttfonts, canvas_module
+
+
+def _setup_pdf_font(pdfmetrics, ttfonts):
+    font_name = "Helvetica"
+    try:
+        pdfmetrics.registerFont(ttfonts.TTFont("ArialUnicode", r"C:\Windows\Fonts\arial.ttf"))
+        font_name = "ArialUnicode"
+    except Exception:
+        pass
+    return font_name
+
+
+def _timeline_label(text):
+    value = str(text or "")
+    if value.startswith("Исполнитель: "):
+        return value.replace("Исполнитель: ", "", 1)
+    if value.startswith("Исполнитель "):
+        return value.replace("Исполнитель ", "", 1)
+    return value
+
+
+def _draw_timeline_landscape_page(pdf, pagesizes, font_name, title, period, customer_items, executor_items, show_progress=True):
+    landscape_a4 = pagesizes.landscape(pagesizes.A4)
+    pdf.showPage()
+    pdf.setPageSize(landscape_a4)
+    page_w, page_h = landscape_a4
+
+    left = 18
+    top = page_h - 22
+    label_w = 74
+    right_margin = 14
+    bottom_margin = 18
+    lane_h = 18
+    lane_gap = 3
+    row_gap = 4
+    max_cols = max(1, int(period))
+    lane_rows = max_cols * 2
+
+    def fit_lines(text, max_width, font_size, max_lines=2):
+        words = str(text or "").split()
+        if not words:
+            return []
+        lines = []
+        current = ""
+        for word in words:
+            candidate = (current + " " + word).strip()
+            if pdf.stringWidth(candidate, font_name, font_size) <= max_width:
+                current = candidate
+                continue
+            if current:
+                lines.append(current)
+            current = word
+            if len(lines) >= max_lines - 1:
+                break
+        if current and len(lines) < max_lines:
+            lines.append(current)
+
+        consumed = " ".join(lines).split()
+        if len(consumed) < len(words):
+            last = lines[-1] if lines else ""
+            while last and pdf.stringWidth(f"{last}...", font_name, font_size) > max_width:
+                last = last[:-1]
+            lines[-1] = f"{last}..." if last else "..."
+        return lines
+
+    pdf.setFont(font_name, 11)
+    pdf.setFillColorRGB(0.12, 0.16, 0.22)
+    pdf.drawString(left, top, title)
+
+    usable_w = page_w - left - right_margin - label_w
+    cell_w = usable_w / max_cols
+    y = top - 18
+
+    # Adapt row height to fit all lanes without clipping.
+    available_h = max(60, y - bottom_margin)
+    fixed_gaps = lane_rows * lane_gap + max_cols * row_gap + 10
+    lane_h = max(12, min(24, int((available_h - fixed_gaps) / max(lane_rows, 1))))
+    lane_font = 8 if lane_h <= 15 else 9
+    task_font = 6.6 if lane_h <= 15 else 7.4
+
+    pdf.setFont(font_name, lane_font)
+    for col in range(1, max_cols + 1):
+        x = left + label_w + (col - 1) * cell_w
+        pdf.setFillColorRGB(0.25, 0.30, 0.40)
+        pdf.drawString(x + 1, y, f"M{col}")
+    y -= 10
+
+    for sprint in range(1, max_cols + 1):
+        lanes = [
+            ("Исп.", [i for i in executor_items if int(i.get("headSprint", 0)) == sprint], (0.75, 0.88, 0.80)),
+            ("Зак.", [i for i in customer_items if int(i.get("headSprint", 0)) == sprint], (0.78, 0.84, 0.95)),
+        ]
+
+        for lane_name, lane_items, base_color in lanes:
+            pdf.setFont(font_name, lane_font)
+            pdf.setFillColorRGB(0.20, 0.24, 0.32)
+            pdf.drawString(left, y + 2, f"С{sprint} {lane_name}")
+
+            for col in range(1, max_cols + 1):
+                x = left + label_w + (col - 1) * cell_w
+                pdf.setStrokeColorRGB(0.86, 0.89, 0.94)
+                pdf.setFillColorRGB(0.97, 0.98, 1.0)
+                pdf.rect(x, y - lane_h + 2, cell_w - 1, lane_h, fill=1, stroke=1)
+
+            for item in lane_items:
+                start = max(1, int(_to_float(item.get("startSprint"), sprint)))
+                duration = max(1, int(_to_float(item.get("durationMonths"), 1)))
+                end = min(max_cols, start + duration - 1)
+                if start > max_cols:
+                    continue
+                x = left + label_w + (start - 1) * cell_w + 0.5
+                w = max(1.5, (end - start + 1) * cell_w - 1.5)
+                progress = max(0.0, min(_to_float(item.get("progress"), 0), 100.0))
+                progress_w = w * (progress / 100.0)
+
+                pdf.setStrokeColorRGB(0.55, 0.62, 0.74)
+                pdf.setFillColorRGB(*base_color)
+                pdf.rect(x, y - lane_h + 2, w, lane_h, fill=1, stroke=1)
+                if show_progress and progress_w > 1:
+                    pdf.setFillColorRGB(base_color[0] * 0.75, base_color[1] * 0.75, base_color[2] * 0.75)
+                    pdf.rect(x, y - lane_h + 2, progress_w, lane_h, fill=1, stroke=0)
+
+                text = _timeline_label(item.get("metricName", ""))
+                if show_progress:
+                    text = f"{text} ({progress:.0f}%)"
+                max_lines = 3 if lane_h >= 18 else 2
+                lines = fit_lines(text, max(8, w - 3), task_font, max_lines=max_lines)
+                if lines:
+                    pdf.setFillColorRGB(0.12, 0.16, 0.22)
+                    pdf.setFont(font_name, task_font)
+                    text_y = y - lane_h + (lane_h * 0.62 if len(lines) == 1 else lane_h * 0.84)
+                    for idx, line in enumerate(lines):
+                        pdf.drawString(x + 1, text_y - idx * (task_font + 0.8), line)
+
+            y -= lane_h + lane_gap
+        y -= row_gap
+
+
+@app.get("/api/report/pdf")
+def report_pdf():
+    period = _parse_period(request.args.get("period", SPRINT_COUNT))
+    data = _build_report_payload(period)
+
+    try:
+        pagesizes, pdfmetrics, ttfonts, canvas_module = _load_reportlab()
+    except ImportError:
+        return jsonify({"error": "Для выгрузки PDF установите зависимость: pip install reportlab"}), 500
+    A4 = pagesizes.A4
+    canvas = canvas_module
+    font_name = _setup_pdf_font(pdfmetrics, ttfonts)
+
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    y = height - 48
+    left = 36
+
+    def write_line(text, size=10, gap=14):
+        nonlocal y
+        if y < 50:
+            pdf.showPage()
+            pdf.setFont(font_name, size)
+            y = height - 48
+        pdf.setFont(font_name, size)
+        pdf.drawString(left, y, str(text))
+        y -= gap
+
+    def wrap_text(text, size=10, gap=12, max_width=None):
+        nonlocal y
+        max_width_local = max_width or (width - left * 2)
+        words = str(text).split()
+        line = ""
+        for word in words:
+            test = (line + " " + word).strip()
+            if pdf.stringWidth(test, font_name, size) <= max_width_local:
+                line = test
+            else:
+                write_line(line, size=size, gap=gap)
+                line = word
+        if line:
+            write_line(line, size=size, gap=gap)
+
+    def ensure_space(required_height, font_size=10):
+        nonlocal y
+        if y - required_height < 40:
+            pdf.showPage()
+            pdf.setFont(font_name, font_size)
+            y = height - 48
+
+    write_line("Отчёт внедрения ПО «ИСКРА»", size=14, gap=18)
+    write_line(f"Дата формирования: {datetime.now().strftime('%d.%m.%Y %H:%M')}", size=9, gap=12)
+    write_line(f"Период: {data['period']} спринт(ов)", size=10)
+    write_line(
+        f"Показатель внедрения: {data['progressPercent']:.2f}% "
+        f"({data['scoreActual']:.2f} из {data['scoreMax']:.2f} баллов)",
+        size=10,
+    )
+    write_line("")
+    write_line("Работы с нарушением сроков / отставанием:", size=11, gap=14)
+    if not data["delayedItems"]:
+        write_line("- Нарушений сроков и критических отставаний нет.", size=10)
+    else:
+        for item in data["delayedItems"][:12]:
+            wrap_text(
+                f"- Спринт {item['sprint']} [{item['area']}]: {item['problem']} "
+                f"(критичность {item['severity']:.1f})",
+                size=9,
+                gap=11,
+            )
+
+    write_line("")
+    write_line("Накопленные долги:", size=11, gap=14)
+    if not data["debts"]:
+        write_line("- Накопленных долгов нет.", size=10)
+    else:
+        for debt in data["debts"][:10]:
+            write_line(
+                f"- Спринт {debt['sprint']} ({debt['title']}): дефицит {debt['gapPoints']:.2f} баллов",
+                size=9,
+                gap=11,
+            )
+
+    write_line("")
+    write_line("Прогноз:", size=11, gap=14)
+    wrap_text(data["forecast"], size=10)
+    write_line("")
+    write_line("Рекомендации:", size=11, gap=14)
+    for rec in data["recommendations"]:
+        wrap_text(f"- {rec}", size=10)
+
+    write_line("")
+    write_line("Детализация по спринтам:", size=11, gap=14)
+    for item in data["sprintDetails"]:
+        write_line(
+            f"Спринт {item['sprint']}: {item['title']} | "
+            f"Исп. {item['executorStatus']:.1f}% | Зак. {item['customerStatus']:.1f}%",
+            size=10,
+        )
+        metrics = item.get("metrics", [])
+        for metric in metrics:
+            wrap_text(
+                f"  • {metric['metricName']}: факт {metric['actual']:.2f} / цель {metric['target']:.2f} "
+                f"({metric['progress']:.1f}%), срок {metric['months']} мес.",
+                size=9,
+                gap=11,
+                max_width=width - left * 2 - 10,
+            )
+        notes = item.get("notes", "").strip()
+        if notes:
+            wrap_text(f"  Примечание: {notes}", size=9, gap=11)
+        y -= 4
+
+    _draw_timeline_landscape_page(
+        pdf,
+        pagesizes,
+        font_name,
+        "Диаграмма сроков задач (Исполнитель сверху, Заказчик снизу):",
+        data["period"],
+        data.get("customerTimeline", []),
+        data.get("executorTimeline", []),
+    )
+
+    pdf.save()
+    buffer.seek(0)
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=f"report_sprint_{period}.pdf",
+        mimetype="application/pdf",
+    )
+
+
+@app.get("/api/plan/pdf")
+def plan_pdf():
+    try:
+        pagesizes, pdfmetrics, ttfonts, canvas_module = _load_reportlab()
+    except ImportError:
+        return jsonify({"error": "Для выгрузки PDF установите зависимость: pip install reportlab"}), 500
+
+    A4 = pagesizes.A4
+    canvas = canvas_module
+    font_name = _setup_pdf_font(pdfmetrics, ttfonts)
+    report_data = _build_report_payload(SPRINT_COUNT)
+
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    y = height - 48
+    left = 36
+
+    def write_line(text, size=10, gap=14):
+        nonlocal y
+        if y < 50:
+            pdf.showPage()
+            pdf.setFont(font_name, size)
+            y = height - 48
+        pdf.setFont(font_name, size)
+        pdf.drawString(left, y, str(text))
+        y -= gap
+
+    def wrap_text(text, size=10, gap=12, max_width=None):
+        nonlocal y
+        max_width_local = max_width or (width - left * 2)
+        words = str(text).split()
+        line = ""
+        for word in words:
+            test = (line + " " + word).strip()
+            if pdf.stringWidth(test, font_name, size) <= max_width_local:
+                line = test
+            else:
+                write_line(line, size=size, gap=gap)
+                line = word
+        if line:
+            write_line(line, size=size, gap=gap)
+
+    write_line("План внедрения ПО «ИСКРА»", size=14, gap=18)
+    write_line(f"Дата формирования: {datetime.now().strftime('%d.%m.%Y %H:%M')}", size=9, gap=12)
+    write_line(f"Спринтов в плане: {SPRINT_COUNT}", size=10)
+    write_line("")
+
+    for sprint in SPRINT_CATALOG:
+        sprint_id = sprint["id"]
+        key = str(sprint_id)
+        cfg = state["config"].get(key, {})
+        tasks = cfg.get("tasks", [])
+        write_line(f"Спринт {sprint_id}: {sprint['title']}", size=11, gap=14)
+        write_line(
+            f"Вес Исполнителя / Заказчика: "
+            f"{_to_float(cfg.get('executorWeight')):.2f} / {_to_float(cfg.get('customerWeight')):.2f}",
+            size=9,
+            gap=11,
+        )
+        if not tasks:
+            write_line("- Метрики не выбраны.", size=9, gap=11)
+        else:
+            for task in tasks:
+                metric_name = next(
+                    (m["name"] for m in METRICS_CATALOG if m["id"] == task.get("metricId")),
+                    f"Метрика {task.get('metricId')}",
+                )
+                wrap_text(
+                    f"- {metric_name}: цель {_to_float(task.get('target')):.2f}, "
+                    f"срок {int(_to_float(task.get('months'), 1))} мес.",
+                    size=9,
+                    gap=11,
+                )
+        y -= 2
+
+    _draw_timeline_landscape_page(
+        pdf,
+        pagesizes,
+        font_name,
+        "Диаграмма сроков задач плана (Исполнитель сверху, Заказчик снизу):",
+        SPRINT_COUNT,
+        report_data.get("customerTimeline", []),
+        report_data.get("executorTimeline", []),
+        show_progress=False,
+    )
+
+    pdf.save()
+    buffer.seek(0)
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name="plan.pdf",
+        mimetype="application/pdf",
     )
 
 
