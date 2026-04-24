@@ -511,11 +511,19 @@ def _load_reportlab():
 
 def _setup_pdf_font(pdfmetrics, ttfonts):
     font_name = "Helvetica"
-    try:
-        pdfmetrics.registerFont(ttfonts.TTFont("ArialUnicode", r"C:\Windows\Fonts\arial.ttf"))
-        font_name = "ArialUnicode"
-    except Exception:
-        pass
+    candidates = [
+        r"C:\Windows\Fonts\arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    ]
+    for path in candidates:
+        try:
+            pdfmetrics.registerFont(ttfonts.TTFont("AppUnicode", path))
+            font_name = "AppUnicode"
+            break
+        except Exception:
+            continue
     return font_name
 
 
