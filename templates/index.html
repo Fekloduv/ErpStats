@@ -21,6 +21,7 @@
                 <button id="editTargetsBtn" class="btn btn-primary">Настроить план</button>
                 <button id="editMetricTargetsBtn" class="btn btn-secondary">Задать целевые метрики</button>
                 <button id="reportBtn" class="btn btn-secondary">Сформировать отчёт</button>
+                <button id="planBtn" class="btn btn-secondary">Сформировать план</button>
             </div>
         </header>
 
@@ -137,6 +138,31 @@
             <div class="dialog-actions">
                 <button type="button" class="btn btn-ghost" id="cancelActualsBtn">Отмена</button>
                 <button type="submit" class="btn btn-primary">Сохранить</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="planDialog">
+        <form id="planForm" method="dialog">
+            <h3>Сформированный план внедрения</h3>
+            <p class="muted">Срез по спринтам: только выбранные метрики и веса, плюс диаграмма сроков задач без прогресса.</p>
+            <div class="table-wrap">
+                <table id="planTable">
+                    <thead>
+                        <tr>
+                            <th>Спринт</th>
+                            <th>План</th>
+                        </tr>
+                    </thead>
+                    <tbody id="planTableBody"></tbody>
+                </table>
+            </div>
+            <div>
+                <h4>Диаграмма сроков задач</h4>
+                <div id="planTimelineWrap" class="timeline-wrap"></div>
+            </div>
+            <div class="dialog-actions">
+                <button type="button" class="btn btn-ghost" id="closePlanBtn">Закрыть</button>
             </div>
         </form>
     </dialog>

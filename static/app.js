@@ -14,6 +14,7 @@ const tableBody = document.querySelector("#metricsTable tbody");
 const editTargetsBtn = document.getElementById("editTargetsBtn");
 const editMetricTargetsBtn = document.getElementById("editMetricTargetsBtn");
 const reportBtn = document.getElementById("reportBtn");
+const planBtn = document.getElementById("planBtn");
 const reportPanel = document.getElementById("reportPanel");
 const periodSelect = document.getElementById("periodSelect");
 const refreshReportBtn = document.getElementById("refreshReportBtn");
@@ -48,6 +49,11 @@ const actualsForm = document.getElementById("actualsForm");
 const actualsTitle = document.getElementById("actualsTitle");
 const actualsFields = document.getElementById("actualsFields");
 const cancelActualsBtn = document.getElementById("cancelActualsBtn");
+const planDialog = document.getElementById("planDialog");
+const planForm = document.getElementById("planForm");
+const planTableBody = document.getElementById("planTableBody");
+const planTimelineWrap = document.getElementById("planTimelineWrap");
+const closePlanBtn = document.getElementById("closePlanBtn");
 
 let activeSprint = null;
 
@@ -481,8 +487,31 @@ function laneColor(owner, progress) {
   return "rgba(142, 168, 232, 0.32)";
 }
 
-function renderTimeline(targetElement, customerItems, executorItems) {
+function buildPlanRow(sprint) {
+  const sprintKey = String(sprint);
+  const sprintItem = state.catalog.find((item) => item.id === sprint);
+  const cfg = state.config[sprintKey] || {};
+  const tasks = cfg.tasks || [];
+  const taskPlanText = tasks.length
+    ? tasks
+        .map((task) => `${getMetricName(task.metricId)} (${task.months} мес.), цель ${numberFormat(task.target)}`)
+        .join("<br>")
+    : "Метрики не выбраны";
+
+  return `
+    <tr>
+      <td><strong>Спринт ${sprint}</strong><br><small>${sprintItem?.title || ""}</small></td>
+      <td>
+        <div>Вес И/З: <strong>${numberFormat(cfg.executorWeight)} / ${numberFormat(cfg.customerWeight)}</strong></div>
+        <div><small>${taskPlanText}</small></div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderTimeline(targetElement, customerItems, executorItems, options = {}) {
   if (!targetElement) return;
+  const showProgress = options.showProgress ?? true;
   const maxCols = state.sprintCount;
   const board = document.createElement("div");
   board.className = "timeline-board";
@@ -505,16 +534,16 @@ function renderTimeline(targetElement, customerItems, executorItems) {
   for (let sprint = 1; sprint <= state.sprintCount; sprint += 1) {
     const lanes = [
       {
-        key: "customer",
-        title: `Спринт ${sprint}`,
-        subtitle: "Заказчик",
-        items: customerItems.filter((item) => Number(item.headSprint) === sprint),
-      },
-      {
         key: "executor",
         title: `Спринт ${sprint}`,
         subtitle: "Исполнитель",
         items: executorItems.filter((item) => Number(item.headSprint) === sprint),
+      },
+      {
+        key: "customer",
+        title: `Спринт ${sprint}`,
+        subtitle: "Заказчик",
+        items: customerItems.filter((item) => Number(item.headSprint) === sprint),
       },
     ];
 
@@ -542,12 +571,17 @@ function renderTimeline(targetElement, customerItems, executorItems) {
 
         const progressFill = document.createElement("div");
         progressFill.className = "timeline-task-progress";
-        progressFill.style.background = laneColor(lane.key, item.progress);
-        progressFill.style.width = `${Math.max(0, Math.min(Number(item.progress || 0), 100))}%`;
+        if (showProgress) {
+          progressFill.style.background = laneColor(lane.key, item.progress);
+          progressFill.style.width = `${Math.max(0, Math.min(Number(item.progress || 0), 100))}%`;
+        } else {
+          progressFill.style.background = "transparent";
+          progressFill.style.width = "0%";
+        }
 
         const label = document.createElement("div");
         label.className = "timeline-task-label";
-        label.textContent = `${item.metricName} (${numberFormat(item.progress)}%)`;
+        label.textContent = showProgress ? `${item.metricName} (${numberFormat(item.progress)}%)` : `${item.metricName}`;
 
         task.appendChild(progressFill);
         task.appendChild(label);
@@ -561,6 +595,28 @@ function renderTimeline(targetElement, customerItems, executorItems) {
 
   targetElement.innerHTML = "";
   targetElement.appendChild(board);
+}
+
+async function openPlanDialog() {
+  try {
+    planTableBody.innerHTML = "";
+    for (let sprint = 1; sprint <= state.sprintCount; sprint += 1) {
+      planTableBody.insertAdjacentHTML("beforeend", buildPlanRow(sprint));
+    }
+    const reportData = await api("/api/report", {
+      method: "POST",
+      body: JSON.stringify({ period: state.sprintCount }),
+    });
+    renderTimeline(
+      planTimelineWrap,
+      reportData.customerTimeline || reportData.timeline || [],
+      reportData.executorTimeline || [],
+      { showProgress: false }
+    );
+    planDialog.showModal();
+  } catch (error) {
+    alert(error.message);
+  }
 }
 
 async function loadReport() {
@@ -647,13 +703,16 @@ async function loadState() {
 editTargetsBtn.addEventListener("click", openTargetsDialog);
 editMetricTargetsBtn.addEventListener("click", openMetricTargetsDialog);
 reportBtn.addEventListener("click", loadReport);
+planBtn.addEventListener("click", openPlanDialog);
 refreshReportBtn.addEventListener("click", loadReport);
 cancelTargetsBtn.addEventListener("click", () => targetsDialog.close());
 cancelMetricTargetsBtn.addEventListener("click", () => metricTargetsDialog.close());
 cancelActualsBtn.addEventListener("click", () => actualsDialog.close());
+closePlanBtn.addEventListener("click", () => planDialog.close());
 targetsForm.addEventListener("submit", saveTargets);
 metricTargetsForm.addEventListener("submit", saveMetricTargets);
 actualsForm.addEventListener("submit", saveActuals);
+planForm.addEventListener("submit", (event) => event.preventDefault());
 
 tableBody.addEventListener("click", (event) => {
   const target = event.target;

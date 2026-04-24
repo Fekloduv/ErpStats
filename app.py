@@ -113,7 +113,7 @@ def _build_default_state():
                 {
                     "metricId": metric_id,
                     "months": 1,
-                    "target": 100.0,
+                    "target": 0.0,
                 }
             ],
         }

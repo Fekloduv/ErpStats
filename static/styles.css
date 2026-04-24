@@ -60,6 +60,7 @@ body {
 .hero-actions {
     display: flex;
     gap: 10px;
+    flex-wrap: wrap;
 }
 
 .panel {
@@ -387,6 +388,11 @@ select {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
+}
+
+#planDialog .table-wrap {
+    max-height: 34vh;
+    overflow: auto;
 }
 
 .badge-ok {
