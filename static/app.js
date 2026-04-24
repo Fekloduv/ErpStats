@@ -3,6 +3,7 @@ const state = {
   sprintDaysCalendar: 30,
   sprintDaysWork: 20,
   catalog: [],
+  metricsCatalog: [],
   config: {},
   actuals: {},
   totalWeights: 0,
@@ -11,6 +12,7 @@ const state = {
 const tableHead = document.querySelector("#metricsTable thead");
 const tableBody = document.querySelector("#metricsTable tbody");
 const editTargetsBtn = document.getElementById("editTargetsBtn");
+const editMetricTargetsBtn = document.getElementById("editMetricTargetsBtn");
 const reportBtn = document.getElementById("reportBtn");
 const reportPanel = document.getElementById("reportPanel");
 const periodSelect = document.getElementById("periodSelect");
@@ -29,11 +31,17 @@ const progressBarFill = document.getElementById("progressBarFill");
 const reportDetailsHead = document.querySelector("#reportDetailsTable thead");
 const reportDetailsBody = document.querySelector("#reportDetailsTable tbody");
 const weightsSummary = document.getElementById("weightsSummary");
+const timelineWrap = document.getElementById("timelineWrap");
 
 const targetsDialog = document.getElementById("targetsDialog");
 const targetsForm = document.getElementById("targetsForm");
 const targetsGrid = document.getElementById("targetsGrid");
 const cancelTargetsBtn = document.getElementById("cancelTargetsBtn");
+
+const metricTargetsDialog = document.getElementById("metricTargetsDialog");
+const metricTargetsForm = document.getElementById("metricTargetsForm");
+const metricTargetsGrid = document.getElementById("metricTargetsGrid");
+const cancelMetricTargetsBtn = document.getElementById("cancelMetricTargetsBtn");
 
 const actualsDialog = document.getElementById("actualsDialog");
 const actualsForm = document.getElementById("actualsForm");
@@ -57,6 +65,26 @@ async function api(url, options = {}) {
 
 function numberFormat(value) {
   return Number(value || 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 });
+}
+
+function getMetricName(metricId) {
+  const metric = state.metricsCatalog.find((item) => item.id === Number(metricId));
+  return metric?.name || `Метрика ${metricId}`;
+}
+
+function getTaskProgress(sprintKey, task) {
+  const metricId = String(task.metricId);
+  const target = Number(task.target || 0);
+  const actual = Number((state.actuals[sprintKey]?.metricActuals || {})[metricId] || 0);
+  const progress = target > 0 ? Math.min((actual / target) * 100, 100) : 0;
+  return { target, actual, progress };
+}
+
+function getCustomerProgress(sprintKey) {
+  const tasks = state.config[sprintKey]?.tasks || [];
+  if (!tasks.length) return 0;
+  const values = tasks.map((task) => getTaskProgress(sprintKey, task).progress);
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 function renderLaggingItems(items) {
@@ -121,12 +149,9 @@ function renderTable() {
     const sprintItem = state.catalog.find((item) => item.id === sprint);
     const cfg = state.config[sprintKey] || {};
     const act = state.actuals[sprintKey] || {};
-
-    const metricTarget = Number(cfg.metricTarget || 0);
-    const metricActual = Number(act.metricActual || 0);
-    const metricProgress = metricTarget > 0 ? Math.min((metricActual / metricTarget) * 100, 100) : 0;
+    const tasks = cfg.tasks || [];
     const executorProgress = Number(act.executorProgress || 0);
-    const customerProgress = metricProgress;
+    const customerProgress = getCustomerProgress(sprintKey);
 
     const maxScore = Number(cfg.executorWeight || 0) + Number(cfg.customerWeight || 0);
     const earnedScore =
@@ -141,6 +166,15 @@ function renderTable() {
       statusClass = "badge-mid";
     }
 
+    const tasksText = tasks.length
+      ? tasks
+          .map((task) => {
+            const p = getTaskProgress(sprintKey, task);
+            return `${getMetricName(task.metricId)} (${task.months} мес.): ${numberFormat(p.actual)} / ${numberFormat(p.target)}`;
+          })
+          .join("<br>")
+      : "Метрики не выбраны";
+
     const row = document.createElement("tr");
     row.innerHTML = `
       <td>Спринт ${sprint}</td>
@@ -152,12 +186,12 @@ function renderTable() {
       </td>
       <td>
         <div>Вес И/З: <strong>${numberFormat(cfg.executorWeight)} / ${numberFormat(cfg.customerWeight)}</strong></div>
-        <div>${sprintItem?.metricName || "Метрика"}: <strong>${numberFormat(metricTarget)}</strong></div>
+        <div>Выбранные метрики:</div>
+        <small>${tasksText}</small>
       </td>
       <td>
         <div>Исполнитель: <strong>${numberFormat(executorProgress)}%</strong></div>
         <div>Заказчик (авто по метрике): <strong>${numberFormat(customerProgress)}%</strong></div>
-        <div>Метрика факт: <strong>${numberFormat(metricActual)}</strong></div>
       </td>
       <td><strong class="${statusClass}">${numberFormat(sprintPercent)}%</strong><br><small>${numberFormat(earnedScore)} / ${numberFormat(maxScore)} баллов</small></td>
       <td><button class="btn btn-secondary" data-sprint="${sprint}">Внести данные</button></td>
@@ -165,7 +199,7 @@ function renderTable() {
     tableBody.appendChild(row);
   }
 
-  weightsSummary.textContent = `Сумма весов по всем спринтам: ${numberFormat(state.totalWeights)} баллов (рекомендуется 100).`;
+  weightsSummary.textContent = `Сумма весов по всем спринтам: ${numberFormat(state.totalWeights)} баллов (должно быть ровно 100).`;
 }
 
 function renderPeriodOptions() {
@@ -190,28 +224,86 @@ function openTargetsDialog() {
     const sprintKey = String(sprint);
     const sprintItem = state.catalog.find((item) => item.id === sprint);
     const cfg = state.config[sprintKey] || {};
-    const row = document.createElement("div");
-    row.className = "target-row";
+    const row = document.createElement("details");
+    row.className = "sprint-accordion";
+    const selected = new Map((cfg.tasks || []).map((task) => [String(task.metricId), task]));
+    const options = state.metricsCatalog
+      .map((metric) => {
+        const task = selected.get(String(metric.id));
+        return `
+          <div class="task-option">
+            <div class="task-option-head">
+              <input type="checkbox" data-sprint="${sprint}" data-role="task-enabled" data-metric="${metric.id}" ${task ? "checked" : ""}>
+              <span>${metric.name}</span>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+
     row.innerHTML = `
-      <strong>Спринт ${sprint}: ${sprintItem?.title || ""}</strong>
-      <div class="target-metrics">
-        <label>
-          Вес Исполнителя
-          <input type="number" min="0" step="0.01" data-sprint="${sprint}" data-field="executorWeight" value="${cfg.executorWeight ?? 0}">
-        </label>
-        <label>
-          Вес Заказчика
-          <input type="number" min="0" step="0.01" data-sprint="${sprint}" data-field="customerWeight" value="${cfg.customerWeight ?? 0}">
-        </label>
-        <label>
-          Цель: ${sprintItem?.metricName || "Метрика"}
-          <input type="number" min="0" step="0.01" data-sprint="${sprint}" data-field="metricTarget" value="${cfg.metricTarget ?? 0}">
-        </label>
+      <summary>
+        <strong>Спринт ${sprint}: ${sprintItem?.title || ""}</strong>
+      </summary>
+      <div class="accordion-body">
+        <div class="target-metrics target-metrics-weights">
+          <label>
+            Вес Исполнителя
+            <input type="number" min="0" max="100" step="0.01" data-sprint="${sprint}" data-field="executorWeight" value="${cfg.executorWeight ?? 0}">
+          </label>
+          <label>
+            Вес Заказчика
+            <input type="number" min="0" max="100" step="0.01" data-sprint="${sprint}" data-field="customerWeight" value="${cfg.customerWeight ?? 0}">
+          </label>
+        </div>
+        <div class="target-metrics">
+          ${options}
+        </div>
       </div>
     `;
     targetsGrid.appendChild(row);
   }
   targetsDialog.showModal();
+}
+
+function openMetricTargetsDialog() {
+  metricTargetsGrid.innerHTML = "";
+  for (let sprint = 1; sprint <= state.sprintCount; sprint += 1) {
+    const sprintKey = String(sprint);
+    const sprintItem = state.catalog.find((item) => item.id === sprint);
+    const cfg = state.config[sprintKey] || {};
+    const tasks = cfg.tasks || [];
+    if (!tasks.length) continue;
+
+    const row = document.createElement("details");
+    row.className = "sprint-accordion";
+    row.innerHTML = `
+      <summary>
+        <strong>Спринт ${sprint}: ${sprintItem?.title || ""}</strong>
+      </summary>
+      <div class="accordion-body">
+        <div class="target-metrics">
+          ${tasks
+            .map((task) => {
+              const metricId = String(task.metricId);
+              return `
+                <label>
+                  Цель задачи: ${getMetricName(task.metricId)}
+                  <input type="number" min="0" step="0.01" data-sprint="${sprint}" data-metric="${metricId}" data-role="target" value="${Number(task.target || 0)}">
+                </label>
+                <label>
+                  Длительность задачи, мес.
+                  <input type="number" min="1" max="${state.sprintCount}" step="1" data-sprint="${sprint}" data-metric="${metricId}" data-role="target-months" value="${Number(task.months || 1)}">
+                </label>
+              `;
+            })
+            .join("")}
+        </div>
+      </div>
+    `;
+    metricTargetsGrid.appendChild(row);
+  }
+  metricTargetsDialog.showModal();
 }
 
 function openActualsDialog(sprint) {
@@ -220,17 +312,27 @@ function openActualsDialog(sprint) {
   const sprintItem = state.catalog.find((item) => item.id === sprint);
   const cfg = state.config[sprintKey] || {};
   const act = state.actuals[sprintKey] || {};
+  const tasks = cfg.tasks || [];
 
   actualsTitle.textContent = `Внести данные: спринт ${sprint} (${sprintItem?.title || ""})`;
+  const taskFields = tasks
+    .map((task) => {
+      const metricId = String(task.metricId);
+      return `
+        <label>
+          Фактическое значение: ${getMetricName(task.metricId)} (цель: ${numberFormat(task.target)})
+          <input type="number" min="0" step="0.01" name="metricActual_${metricId}" value="${Number((act.metricActuals || {})[metricId] || 0)}">
+        </label>
+      `;
+    })
+    .join("");
+
   actualsFields.innerHTML = `
     <label>
       Исполнитель: выполнение этапов (0-100%)
       <input type="number" min="0" max="100" step="0.01" name="executorProgress" value="${act.executorProgress ?? 0}">
     </label>
-    <label>
-      Фактическое значение: ${sprintItem?.metricName || "метрика"} (план: ${numberFormat(cfg.metricTarget)})
-      <input type="number" min="0" step="0.01" name="metricActual" value="${act.metricActual ?? 0}">
-    </label>
+    ${taskFields || "<p class='muted'>Метрики для спринта не выбраны. Сначала настройте план.</p>"}
     <label>
       Комментарии / долги
       <textarea name="notes" rows="3">${act.notes ?? ""}</textarea>
@@ -247,14 +349,36 @@ async function saveTargets(event) {
     config[String(sprint)] = {
       executorWeight: 0,
       customerWeight: 0,
-      metricTarget: 0,
+      tasks: [],
     };
   }
 
   inputs.forEach((input) => {
     const sprint = input.dataset.sprint;
     const field = input.dataset.field;
-    config[sprint][field] = Number(input.value || 0);
+    const value = Number(input.value || 0);
+    config[sprint][field] = Math.max(0, Math.min(value, 100));
+  });
+
+  const totalWeights = Object.values(config).reduce(
+    (sum, sprintConfig) => sum + Number(sprintConfig.executorWeight || 0) + Number(sprintConfig.customerWeight || 0),
+    0
+  );
+  if (Math.abs(totalWeights - 100) > 0.01) {
+    alert(`Сумма весов должна быть ровно 100. Сейчас: ${numberFormat(totalWeights)}.`);
+    return;
+  }
+
+  const checkboxes = targetsGrid.querySelectorAll("input[data-role='task-enabled']");
+  checkboxes.forEach((checkbox) => {
+    if (!(checkbox instanceof HTMLInputElement) || !checkbox.checked) return;
+    const sprint = checkbox.dataset.sprint;
+    const metric = String(checkbox.dataset.metric || "0");
+    const existingTask = (state.config[sprint]?.tasks || []).find((task) => String(task.metricId) === metric);
+    config[sprint].tasks.push({
+      metricId: Number(metric),
+      months: Number(existingTask?.months || 1),
+    });
   });
 
   try {
@@ -272,14 +396,54 @@ async function saveTargets(event) {
   }
 }
 
+async function saveMetricTargets(event) {
+  event.preventDefault();
+  const targets = {};
+  for (let sprint = 1; sprint <= state.sprintCount; sprint += 1) {
+    targets[String(sprint)] = {};
+  }
+  const inputs = metricTargetsGrid.querySelectorAll("input[data-role='target']");
+  inputs.forEach((input) => {
+    const sprint = input.dataset.sprint;
+    const metric = input.dataset.metric;
+    const monthsInput = metricTargetsGrid.querySelector(
+      `input[data-role='target-months'][data-sprint='${sprint}'][data-metric='${metric}']`
+    );
+    targets[sprint][metric] = {
+      target: Number(input.value || 0),
+      months: Number(monthsInput?.value || 1),
+    };
+  });
+
+  try {
+    await api("/api/targets", {
+      method: "POST",
+      body: JSON.stringify({ targets }),
+    });
+    metricTargetsDialog.close();
+    await loadState();
+    if (!reportPanel.hidden) {
+      await loadReport();
+    }
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
 async function saveActuals(event) {
   event.preventDefault();
   if (!activeSprint) return;
 
   const formData = new FormData(actualsForm);
+  const metricActuals = {};
+  const cfgTasks = state.config[String(activeSprint)]?.tasks || [];
+  cfgTasks.forEach((task) => {
+    const key = `metricActual_${task.metricId}`;
+    metricActuals[String(task.metricId)] = Number(formData.get(key) || 0);
+  });
   const values = {
     executorProgress: Number(formData.get("executorProgress") || 0),
-    metricActual: Number(formData.get("metricActual") || 0),
+    metricActuals,
     notes: String(formData.get("notes") || ""),
   };
 
@@ -296,6 +460,107 @@ async function saveActuals(event) {
   } catch (error) {
     alert(error.message);
   }
+}
+
+function progressColor(progress) {
+  const value = Number(progress || 0);
+  if (value >= 95) return "#2f855a";
+  if (value >= 60) return "#4c6fb3";
+  return "#b7791f";
+}
+
+function laneColor(owner, progress) {
+  const value = Number(progress || 0);
+  if (owner === "executor") {
+    if (value >= 95) return "rgba(47, 158, 100, 0.45)";
+    if (value >= 60) return "rgba(82, 183, 136, 0.38)";
+    return "rgba(116, 198, 157, 0.32)";
+  }
+  if (value >= 95) return "rgba(61, 109, 204, 0.45)";
+  if (value >= 60) return "rgba(94, 129, 216, 0.38)";
+  return "rgba(142, 168, 232, 0.32)";
+}
+
+function renderTimeline(targetElement, customerItems, executorItems) {
+  if (!targetElement) return;
+  const maxCols = state.sprintCount;
+  const board = document.createElement("div");
+  board.className = "timeline-board";
+
+  const header = document.createElement("div");
+  header.className = "timeline-header";
+  header.innerHTML = `<div class="timeline-label">Спринт</div>`;
+  const headerMonths = document.createElement("div");
+  headerMonths.className = "timeline-months";
+  headerMonths.style.gridTemplateColumns = `repeat(${maxCols}, minmax(62px, 1fr))`;
+  for (let col = 1; col <= maxCols; col += 1) {
+    const month = document.createElement("div");
+    month.className = "timeline-month";
+    month.textContent = `М${col}`;
+    headerMonths.appendChild(month);
+  }
+  header.appendChild(headerMonths);
+  board.appendChild(header);
+
+  for (let sprint = 1; sprint <= state.sprintCount; sprint += 1) {
+    const lanes = [
+      {
+        key: "customer",
+        title: `Спринт ${sprint}`,
+        subtitle: "Заказчик",
+        items: customerItems.filter((item) => Number(item.headSprint) === sprint),
+      },
+      {
+        key: "executor",
+        title: `Спринт ${sprint}`,
+        subtitle: "Исполнитель",
+        items: executorItems.filter((item) => Number(item.headSprint) === sprint),
+      },
+    ];
+
+    lanes.forEach((lane) => {
+      const row = document.createElement("div");
+      row.className = "timeline-row";
+      row.innerHTML = `
+        <div class="timeline-label">
+          <span>${lane.title}</span>
+          <span class="timeline-label-sub">${lane.subtitle}</span>
+        </div>
+      `;
+
+      const track = document.createElement("div");
+      track.className = "timeline-track";
+      track.style.gridTemplateColumns = `repeat(${maxCols}, minmax(62px, 1fr))`;
+
+      lane.items.forEach((item) => {
+        const start = Math.max(1, Number(item.startSprint || sprint));
+        const duration = Math.max(1, Number(item.durationMonths || 1));
+        const safeSpan = Math.min(duration, maxCols - start + 1);
+        const task = document.createElement("div");
+        task.className = `timeline-task ${lane.key === "executor" ? "timeline-task-executor" : "timeline-task-customer"}`;
+        task.style.gridColumn = `${start} / span ${safeSpan}`;
+
+        const progressFill = document.createElement("div");
+        progressFill.className = "timeline-task-progress";
+        progressFill.style.background = laneColor(lane.key, item.progress);
+        progressFill.style.width = `${Math.max(0, Math.min(Number(item.progress || 0), 100))}%`;
+
+        const label = document.createElement("div");
+        label.className = "timeline-task-label";
+        label.textContent = `${item.metricName} (${numberFormat(item.progress)}%)`;
+
+        task.appendChild(progressFill);
+        task.appendChild(label);
+        track.appendChild(task);
+      });
+
+      row.appendChild(track);
+      board.appendChild(row);
+    });
+  }
+
+  targetElement.innerHTML = "";
+  targetElement.appendChild(board);
 }
 
 async function loadReport() {
@@ -345,17 +610,21 @@ async function loadReport() {
     `;
     reportDetailsBody.innerHTML = "";
     data.sprintDetails.forEach((item) => {
+      const metricsText = (item.metrics || [])
+        .map((metric) => `${metric.metricName}: ${numberFormat(metric.actual)} / ${numberFormat(metric.target)} (${numberFormat(metric.progress)}%)`)
+        .join("<br>");
       const row = document.createElement("tr");
       row.innerHTML = `
         <td>${item.sprint}. ${item.title}</td>
         <td>${numberFormat(item.executorStatus)}%</td>
         <td>${numberFormat(item.customerStatus)}%</td>
-        <td>${item.metricName}: ${numberFormat(item.metricActual)} / ${numberFormat(item.metricTarget)}</td>
+        <td>${metricsText || "-"}</td>
         <td>${numberFormat(item.sprintScore)} / ${numberFormat(item.sprintMax)}</td>
         <td>${item.notes || "-"}</td>
       `;
       reportDetailsBody.appendChild(row);
     });
+    renderTimeline(timelineWrap, data.customerTimeline || data.timeline || [], data.executorTimeline || []);
   } catch (error) {
     alert(error.message);
   }
@@ -367,6 +636,7 @@ async function loadState() {
   state.sprintDaysCalendar = data.sprintDaysCalendar;
   state.sprintDaysWork = data.sprintDaysWork;
   state.catalog = data.catalog;
+  state.metricsCatalog = data.metricsCatalog || [];
   state.config = data.config;
   state.actuals = data.actuals;
   state.totalWeights = data.totalWeights;
@@ -375,11 +645,14 @@ async function loadState() {
 }
 
 editTargetsBtn.addEventListener("click", openTargetsDialog);
+editMetricTargetsBtn.addEventListener("click", openMetricTargetsDialog);
 reportBtn.addEventListener("click", loadReport);
 refreshReportBtn.addEventListener("click", loadReport);
 cancelTargetsBtn.addEventListener("click", () => targetsDialog.close());
+cancelMetricTargetsBtn.addEventListener("click", () => metricTargetsDialog.close());
 cancelActualsBtn.addEventListener("click", () => actualsDialog.close());
 targetsForm.addEventListener("submit", saveTargets);
+metricTargetsForm.addEventListener("submit", saveMetricTargets);
 actualsForm.addEventListener("submit", saveActuals);
 
 tableBody.addEventListener("click", (event) => {

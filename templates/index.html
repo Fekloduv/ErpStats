@@ -19,6 +19,7 @@
             </div>
             <div class="hero-actions">
                 <button id="editTargetsBtn" class="btn btn-primary">Настроить план</button>
+                <button id="editMetricTargetsBtn" class="btn btn-secondary">Задать целевые метрики</button>
                 <button id="reportBtn" class="btn btn-secondary">Сформировать отчёт</button>
             </div>
         </header>
@@ -87,6 +88,11 @@
                 <ul id="recommendationsList" class="lagging-list"></ul>
             </div>
             <div>
+                <h3>Диаграмма сроков задач</h3>
+                <p class="muted">В одном поле: для каждого спринта показаны дорожки Заказчика и Исполнителя. По горизонтали — длительность в месяцах, внутри полосы — прогресс выполнения.</p>
+                <div id="timelineWrap" class="timeline-wrap"></div>
+            </div>
+            <div>
                 <h3>Детализация по спринтам</h3>
                 <div class="table-wrap">
                     <table id="reportDetailsTable">
@@ -102,11 +108,23 @@
         <form id="targetsForm" method="dialog">
             <h3>Настройка плана</h3>
             <p class="muted">
-                Для каждого спринта задайте веса баллов (Исполнитель/Заказчик) и целевое значение метрики Заказчика.
+                Для каждого спринта выберите метрики и задайте веса Исполнителя/Заказчика.
             </p>
             <div id="targetsGrid" class="targets-grid"></div>
             <div class="dialog-actions">
                 <button type="button" class="btn btn-ghost" id="cancelTargetsBtn">Отмена</button>
+                <button type="submit" class="btn btn-primary">Сохранить</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="metricTargetsDialog">
+        <form id="metricTargetsForm" method="dialog">
+            <h3>Целевые значения метрик</h3>
+            <p class="muted">Здесь задаются цель на всю задачу и длительность в месяцах для выбранных в плане метрик.</p>
+            <div id="metricTargetsGrid" class="targets-grid"></div>
+            <div class="dialog-actions">
+                <button type="button" class="btn btn-ghost" id="cancelMetricTargetsBtn">Отмена</button>
                 <button type="submit" class="btn btn-primary">Сохранить</button>
             </div>
         </form>

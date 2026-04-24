@@ -81,15 +81,20 @@ SPRINT_CATALOG = [
     },
 ]
 
+METRICS_CATALOG = [
+    {"id": sprint["id"], "name": sprint["metricName"]}
+    for sprint in SPRINT_CATALOG
+]
+
 DEFAULT_WEIGHTS = {
     1: {"executor": 6.0, "customer": 5.0},
-    2: {"executor": 6.0, "customer": 6.0},
+    2: {"executor": 6.0, "customer": 5.0},
     3: {"executor": 5.0, "customer": 6.0},
-    4: {"executor": 6.0, "customer": 7.0},
-    5: {"executor": 5.0, "customer": 7.0},
-    6: {"executor": 5.0, "customer": 7.0},
+    4: {"executor": 6.0, "customer": 6.0},
+    5: {"executor": 5.0, "customer": 6.0},
+    6: {"executor": 5.0, "customer": 6.0},
     7: {"executor": 5.0, "customer": 6.0},
-    8: {"executor": 6.0, "customer": 7.0},
+    8: {"executor": 6.0, "customer": 6.0},
     9: {"executor": 4.0, "customer": 6.0},
 }
 
@@ -100,14 +105,21 @@ def _build_default_state():
     for sprint in SPRINT_CATALOG:
         sprint_id = sprint["id"]
         key = str(sprint_id)
+        metric_id = sprint_id
         config[key] = {
             "executorWeight": DEFAULT_WEIGHTS[sprint_id]["executor"],
             "customerWeight": DEFAULT_WEIGHTS[sprint_id]["customer"],
-            "metricTarget": 100.0,
+            "tasks": [
+                {
+                    "metricId": metric_id,
+                    "months": 1,
+                    "target": 100.0,
+                }
+            ],
         }
         actuals[key] = {
             "executorProgress": 0.0,
-            "metricActual": 0.0,
+            "metricActuals": {str(metric_id): 0.0},
             "notes": "",
         }
     return {"config": config, "actuals": actuals}
@@ -121,6 +133,32 @@ def _to_float(value, fallback=0.0):
         return float(value)
     except (TypeError, ValueError):
         return fallback
+
+
+def _normalize_tasks(raw_tasks, previous_tasks=None):
+    previous_targets = {}
+    if previous_tasks:
+        for task in previous_tasks:
+            metric_id = int(_to_float(task.get("metricId"), 0))
+            if metric_id > 0:
+                previous_targets[metric_id] = max(_to_float(task.get("target"), 0), 0)
+
+    normalized = []
+    seen = set()
+    for task in raw_tasks or []:
+        metric_id = int(_to_float(task.get("metricId"), 0))
+        if metric_id < 1 or metric_id > len(METRICS_CATALOG) or metric_id in seen:
+            continue
+        seen.add(metric_id)
+        months = int(_to_float(task.get("months"), 1))
+        normalized.append(
+            {
+                "metricId": metric_id,
+                "months": max(1, min(months, SPRINT_COUNT)),
+                "target": max(_to_float(task.get("target"), previous_targets.get(metric_id, 0.0)), 0),
+            }
+        )
+    return normalized
 
 
 @app.route("/")
@@ -142,6 +180,7 @@ def get_state():
             "sprintDaysCalendar": SPRINT_DAYS_CALENDAR,
             "sprintDaysWork": SPRINT_DAYS_WORK,
             "catalog": SPRINT_CATALOG,
+            "metricsCatalog": METRICS_CATALOG,
             "config": state["config"],
             "actuals": state["actuals"],
             "totalWeights": round(total_weights, 2),
@@ -155,17 +194,58 @@ def save_config():
     config = payload.get("config", {})
 
     normalized = {}
+    total_weights = 0.0
     for sprint in SPRINT_CATALOG:
         key = str(sprint["id"])
         sprint_cfg = config.get(key, {})
+        old_cfg = state["config"].get(key, {})
+        old_tasks = old_cfg.get("tasks", [])
+        tasks = _normalize_tasks(sprint_cfg.get("tasks", []), old_tasks)
+        executor_weight = max(
+            min(_to_float(sprint_cfg.get("executorWeight"), DEFAULT_WEIGHTS[sprint["id"]]["executor"]), 100),
+            0,
+        )
+        customer_weight = max(
+            min(_to_float(sprint_cfg.get("customerWeight"), DEFAULT_WEIGHTS[sprint["id"]]["customer"]), 100),
+            0,
+        )
         normalized[key] = {
-            "executorWeight": max(_to_float(sprint_cfg.get("executorWeight"), DEFAULT_WEIGHTS[sprint["id"]]["executor"]), 0),
-            "customerWeight": max(_to_float(sprint_cfg.get("customerWeight"), DEFAULT_WEIGHTS[sprint["id"]]["customer"]), 0),
-            "metricTarget": max(_to_float(sprint_cfg.get("metricTarget"), 100), 0),
+            "executorWeight": executor_weight,
+            "customerWeight": customer_weight,
+            "tasks": tasks,
         }
+        total_weights += executor_weight + customer_weight
+
+    if abs(total_weights - 100.0) > 0.01:
+        return jsonify({"error": "Сумма весов Исполнителя и Заказчика должна быть ровно 100."}), 400
 
     state["config"] = normalized
 
+    return jsonify({"ok": True})
+
+
+@app.post("/api/targets")
+def save_targets():
+    payload = request.get_json(silent=True) or {}
+    targets = payload.get("targets", {})
+    for sprint in SPRINT_CATALOG:
+        key = str(sprint["id"])
+        cfg = state["config"].get(key, {})
+        tasks = cfg.get("tasks", [])
+        sprint_targets = targets.get(key, {})
+        for task in tasks:
+            metric_key = str(task["metricId"])
+            if metric_key in sprint_targets:
+                target_data = sprint_targets.get(metric_key, {})
+                if isinstance(target_data, dict):
+                    task["target"] = max(_to_float(target_data.get("target"), task.get("target", 0)), 0)
+                    task["months"] = max(
+                        1,
+                        min(int(_to_float(target_data.get("months"), task.get("months", 1))), SPRINT_COUNT),
+                    )
+                else:
+                    # Backward compatibility with old payload format: {metricId: target}
+                    task["target"] = max(_to_float(target_data, task.get("target", 0)), 0)
     return jsonify({"ok": True})
 
 
@@ -178,9 +258,18 @@ def save_actuals(sprint_id):
     values = payload.get("values", {})
     sprint_key = str(sprint_id)
     current = state["actuals"].get(sprint_key, {})
+    current_actuals = current.get("metricActuals", {})
+    incoming_actuals = values.get("metricActuals", {})
+    metric_actuals = {}
+    for metric in METRICS_CATALOG:
+        metric_key = str(metric["id"])
+        metric_actuals[metric_key] = max(
+            _to_float(incoming_actuals.get(metric_key), current_actuals.get(metric_key, 0)),
+            0,
+        )
     state["actuals"][sprint_key] = {
         "executorProgress": max(min(_to_float(values.get("executorProgress"), current.get("executorProgress", 0)), 100), 0),
-        "metricActual": max(_to_float(values.get("metricActual"), current.get("metricActual", 0)), 0),
+        "metricActuals": metric_actuals,
         "notes": str(values.get("notes", current.get("notes", ""))).strip(),
     }
 
@@ -201,6 +290,8 @@ def report():
     actual_score = 0.0
     delayed_items = []
     sprint_details = []
+    timeline_items = []
+    executor_timeline_items = []
 
     # Debts from earlier sprints included in selected period.
     debts = []
@@ -212,12 +303,51 @@ def report():
         key = str(sprint_id)
         cfg = state["config"].get(key, {})
         act = state["actuals"].get(key, {})
+        tasks = cfg.get("tasks", [])
         executor_weight = _to_float(cfg.get("executorWeight"))
         customer_weight = _to_float(cfg.get("customerWeight"))
-        metric_target = _to_float(cfg.get("metricTarget"))
-        metric_actual = _to_float(act.get("metricActual"))
+        metric_actuals = act.get("metricActuals", {})
         executor_progress = max(min(_to_float(act.get("executorProgress")), 100), 0)
-        metric_progress = 0.0 if metric_target == 0 else min((metric_actual / metric_target) * 100, 100)
+        progress_values = []
+        metrics_summary = []
+        for task in tasks:
+            metric_id = task.get("metricId")
+            metric_name = next((m["name"] for m in METRICS_CATALOG if m["id"] == metric_id), f"Метрика {metric_id}")
+            metric_target = _to_float(task.get("target"))
+            metric_actual = _to_float(metric_actuals.get(str(metric_id), 0))
+            metric_progress = 0.0 if metric_target == 0 else min((metric_actual / metric_target) * 100, 100)
+            progress_values.append(metric_progress)
+            metrics_summary.append(
+                {
+                    "metricId": metric_id,
+                    "metricName": metric_name,
+                    "target": round(metric_target, 2),
+                    "actual": round(metric_actual, 2),
+                    "progress": round(metric_progress, 2),
+                    "months": int(_to_float(task.get("months"), 1)),
+                }
+            )
+            timeline_items.append(
+                {
+                    "headSprint": sprint_id,
+                    "metricId": metric_id,
+                    "metricName": metric_name,
+                    "startSprint": sprint_id,
+                    "durationMonths": int(_to_float(task.get("months"), 1)),
+                    "progress": round(metric_progress, 2),
+                }
+            )
+        executor_timeline_items.append(
+            {
+                "headSprint": sprint_id,
+                "metricId": sprint_id,
+                "metricName": f"Исполнитель: {sprint['title']}",
+                "startSprint": sprint_id,
+                "durationMonths": 1,
+                "progress": round(executor_progress, 2),
+            }
+        )
+        metric_progress = sum(progress_values) / len(progress_values) if progress_values else 0.0
 
         customer_progress = metric_progress
         sprint_max = executor_weight + customer_weight
@@ -231,9 +361,17 @@ def report():
         for dep in sprint["dependencies"]:
             dep_actual = state["actuals"].get(str(dep), {})
             dep_cfg = state["config"].get(str(dep), {})
-            dep_metric_target = _to_float(dep_cfg.get("metricTarget"), 1)
-            dep_metric_actual = _to_float(dep_actual.get("metricActual"), 0)
-            dep_metric_progress = 0 if dep_metric_target == 0 else min((dep_metric_actual / dep_metric_target) * 100, 100)
+            dep_tasks = dep_cfg.get("tasks", [])
+            dep_progress_values = []
+            dep_actuals = dep_actual.get("metricActuals", {})
+            for dep_task in dep_tasks:
+                dep_metric_target = _to_float(dep_task.get("target"), 1)
+                dep_metric_actual = _to_float(dep_actuals.get(str(dep_task.get("metricId")), 0), 0)
+                dep_metric_progress = 0 if dep_metric_target == 0 else min((dep_metric_actual / dep_metric_target) * 100, 100)
+                dep_progress_values.append(dep_metric_progress)
+            dep_metric_progress = (
+                sum(dep_progress_values) / len(dep_progress_values) if dep_progress_values else 0
+            )
             if dep_metric_progress < 95:
                 dependencies_blocking.append(dep)
 
@@ -261,8 +399,8 @@ def report():
                     "sprint": sprint_id,
                     "area": "Заказчик",
                     "problem": (
-                        f"Невыполнение по вводу и целевым показателям: "
-                        f"{customer_progress:.1f}% (цель {metric_target:.0f}, факт {metric_actual:.0f})."
+                        f"Невыполнение по выбранным метрикам: "
+                        f"{customer_progress:.1f}%."
                     ),
                     "severity": round(100 - customer_progress, 2),
                 }
@@ -283,9 +421,7 @@ def report():
                 "title": sprint["title"],
                 "executorStatus": round(executor_progress, 2),
                 "customerStatus": round(customer_progress, 2),
-                "metricName": sprint["metricName"],
-                "metricTarget": round(metric_target, 2),
-                "metricActual": round(metric_actual, 2),
+                "metrics": metrics_summary,
                 "sprintScore": round(sprint_score, 2),
                 "sprintMax": round(sprint_max, 2),
                 "notes": act.get("notes", ""),
@@ -347,6 +483,9 @@ def report():
             "forecast": forecast_text,
             "recommendations": recommendations,
             "sprintDetails": sprint_details,
+            "timeline": timeline_items,
+            "customerTimeline": timeline_items,
+            "executorTimeline": executor_timeline_items,
         }
     )
 
