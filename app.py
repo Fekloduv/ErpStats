@@ -1,5 +1,6 @@
 import io
 import importlib
+import os
 from datetime import datetime
 
 from flask import Flask, jsonify, render_template, request, send_file
@@ -511,12 +512,23 @@ def _load_reportlab():
 
 def _setup_pdf_font(pdfmetrics, ttfonts):
     font_name = "Helvetica"
+    bundled_candidates = []
+    try:
+        reportlab_module = importlib.import_module("reportlab")
+        reportlab_dir = os.path.dirname(reportlab_module.__file__)
+        bundled_candidates = [
+            os.path.join(reportlab_dir, "fonts", "Vera.ttf"),
+            os.path.join(reportlab_dir, "fonts", "VeraBd.ttf"),
+        ]
+    except Exception:
+        bundled_candidates = []
+
     candidates = [
         r"C:\Windows\Fonts\arial.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-    ]
+    ] + bundled_candidates
     for path in candidates:
         try:
             pdfmetrics.registerFont(ttfonts.TTFont("AppUnicode", path))
